@@ -64,12 +64,23 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
     # --- MODIFICADO: Agregamos la pestaña para editar textos ---
     tab_prod, tab_menu, tab_recetas = st.tabs(["📝 Base de Productos", "📅 Menú Semanal", "📖 Textos Recetas"])
     
-    # --- EDITOR DE PRODUCTOS ---
+    # --- EDITOR DE PRODUCTOS (CON BUSCADOR INTEGRADO) ---
     with tab_prod:
         st.write("Edita precios, unidades y rendimiento.")
         
+        # 1. BUSCADOR
+        texto_busqueda = st.text_input("🔍 Buscar producto para editar:", placeholder="Ej: Avena, Pollo...")
+
+        # 2. FILTRADO (Manteniendo el índice original para seguridad)
+        if texto_busqueda:
+            # Filtramos buscando el texto (insensible a mayúsculas)
+            df_filtered = df_productos[df_productos['Producto'].str.contains(texto_busqueda, case=False, na=False)]
+        else:
+            df_filtered = df_productos
+
+        # 3. EDITOR
         df_productos_editado = st.data_editor(
-            df_productos,
+            df_filtered,
             num_rows="dynamic",
             use_container_width=True,
             key="editor_productos_cloud",
@@ -88,10 +99,19 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
             }
         )
         
+        # 4. BOTÓN DE GUARDADO INTELIGENTE
         if st.button("💾 Guardar Cambios en Productos (Nube)"):
             try:
-                conn.update(worksheet="productos", data=df_productos_editado)
-                st.success("✅ ¡Actualizado! Recargando...")
+                # SI ESTAMOS FILTRANDO, NO PODEMOS GUARDAR DIRECTAMENTE (Borraríamos el resto)
+                # TENEMOS QUE HACER UN "MERGE"
+                if texto_busqueda:
+                    df_final = df_productos.copy() # Copia de seguridad del original completo
+                    df_final.update(df_productos_editado) # Actualizamos SOLO las filas modificadas
+                else:
+                    df_final = df_productos_editado # Si no hay filtro, guardamos todo tal cual
+
+                conn.update(worksheet="productos", data=df_final)
+                st.success("✅ ¡Actualizado correctamente! (Se han combinado los cambios)")
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
@@ -116,7 +136,7 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
 
-    # --- NUEVO: EDITOR DE TEXTOS DE RECETAS ---
+    # --- EDITOR DE TEXTOS DE RECETAS ---
     with tab_recetas:
         st.write("Pega aquí los textos largos (instrucciones) de cada comida.")
         df_recetas_editado = st.data_editor(
@@ -228,7 +248,7 @@ if modo == "🛒 Armar Carrito de Compra":
         filtro_usuario = st.multiselect(
             "Filtrar productos:",
             options=opciones,
-            placeholder="Escribe para buscar..." # <--- FIX: Corrección de idioma
+            placeholder="Escribe para buscar..."
         )
 
     if filtro_usuario:
@@ -278,7 +298,7 @@ if modo == "🛒 Armar Carrito de Compra":
     col2.metric("📦 Paquetes/Unidades", f"{df_seleccionado['Cantidad_a_Comprar'].sum():.1f}")
 
 # ==========================================
-# MODO 2: COCINA (MODIFICADO PARA TEXTOS)
+# MODO 2: COCINA
 # ==========================================
 elif modo == "🍱 Ver Recetas (Cocina)":
     st.subheader("Guía de Cocina")
