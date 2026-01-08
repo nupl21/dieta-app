@@ -17,6 +17,13 @@ def cargar_datos():
         prod = conn.read(worksheet="productos", ttl=0)
         menu = conn.read(worksheet="menu_semanal", ttl=0)
         
+        # --- NUEVO: Intentamos leer la hoja de recetas ---
+        try:
+            recetas = conn.read(worksheet="recetas", ttl=0)
+        except:
+            # Si falla o no existe, creamos un vacío para que no se rompa
+            recetas = pd.DataFrame(columns=["Dia", "Momento", "Titulo", "Descripcion"])
+
         # Limpieza de Precios
         prod['Precio'] = pd.to_numeric(prod['Precio'], errors='coerce').fillna(0)
         
@@ -36,12 +43,17 @@ def cargar_datos():
         # Limpieza de Menú
         menu['Cantidad_Estimada'] = pd.to_numeric(menu['Cantidad_Estimada'], errors='coerce').fillna(0)
         
-        return prod, menu
+        # Limpieza de Recetas (Asegurar tipos)
+        if not recetas.empty:
+            recetas['Dia'] = pd.to_numeric(recetas['Dia'], errors='coerce').fillna(0)
+            recetas['Momento'] = recetas['Momento'].astype(str)
+        
+        return prod, menu, recetas
     except Exception as e:
         st.error(f"⚠️ Error conectando con Google Sheets. Verifica las hojas. Detalle: {e}")
         st.stop()
 
-df_productos, df_menu = cargar_datos()
+df_productos, df_menu, df_recetas = cargar_datos()
 
 # ==========================================
 # 🛠️ SECCIÓN DE ADMINISTRACIÓN
@@ -49,7 +61,8 @@ df_productos, df_menu = cargar_datos()
 with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)", expanded=False):
     st.info("💡 **Tip:** En 'Rendimiento' pon cuánto trae el paquete. Ej: Pan Lactal = 20 (rodajas), Huevos = 30 (maple), Carne = 1 (kg).")
     
-    tab_prod, tab_menu = st.tabs(["📝 Base de Productos", "📅 Menú Semanal"])
+    # --- MODIFICADO: Agregamos la pestaña para editar textos ---
+    tab_prod, tab_menu, tab_recetas = st.tabs(["📝 Base de Productos", "📅 Menú Semanal", "📖 Textos Recetas"])
     
     # --- EDITOR DE PRODUCTOS ---
     with tab_prod:
@@ -97,6 +110,27 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
         if st.button("💾 Guardar Cambios en Menú (Nube)"):
             try:
                 conn.update(worksheet="menu_semanal", data=df_menu_editado)
+                st.success("✅ ¡Actualizado! Recargando...")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
+
+    # --- NUEVO: EDITOR DE TEXTOS DE RECETAS ---
+    with tab_recetas:
+        st.write("Pega aquí los textos largos (instrucciones) de cada comida.")
+        df_recetas_editado = st.data_editor(
+            df_recetas, 
+            num_rows="dynamic", 
+            use_container_width=True, 
+            key="editor_textos_cloud",
+            column_config={
+                "Descripcion": st.column_config.TextColumn("Instrucciones", width="large")
+            }
+        )
+        if st.button("💾 Guardar Textos Recetas (Nube)"):
+            try:
+                conn.update(worksheet="recetas", data=df_recetas_editado)
                 st.success("✅ ¡Actualizado! Recargando...")
                 st.cache_data.clear()
                 st.rerun()
@@ -194,7 +228,7 @@ if modo == "🛒 Armar Carrito de Compra":
         filtro_usuario = st.multiselect(
             "Filtrar productos:",
             options=opciones,
-            placeholder="Escribe para buscar..."
+            placeholder="Escribe para buscar..." # <--- FIX: Corrección de idioma
         )
 
     if filtro_usuario:
@@ -244,25 +278,49 @@ if modo == "🛒 Armar Carrito de Compra":
     col2.metric("📦 Paquetes/Unidades", f"{df_seleccionado['Cantidad_a_Comprar'].sum():.1f}")
 
 # ==========================================
-# MODO 2: COCINA
+# MODO 2: COCINA (MODIFICADO PARA TEXTOS)
 # ==========================================
 elif modo == "🍱 Ver Recetas (Cocina)":
     st.subheader("Guía de Cocina")
+    
     if df_menu.empty:
          st.info("No hay menú cargado aún.")
     else:
+        # Obtenemos los días disponibles y los ordenamos
         try:
             dias = sorted(df_menu["Dia"].unique())
         except:
             dias = df_menu["Dia"].unique()
 
         if len(dias) > 0:
-            tabs = st.tabs([f"Día {d}" for d in dias])
+            tabs = st.tabs([f"Día {int(d)}" for d in dias])
+            
             for i, d in enumerate(dias):
                 with tabs[i]:
                     dd = df_menu[df_menu["Dia"] == d]
-                    for m in ["Desayuno", "Almuerzo", "Colacion", "Merienda", "Cena"]:
+                    # Orden lógico de comidas
+                    orden_comidas = ["Desayuno", "Almuerzo", "Colacion", "Merienda", "Cena"]
+                    
+                    for m in orden_comidas:
+                        # Filtramos ingredientes y textos para este Día y Momento
                         ing = dd[dd["Momento"] == m]
-                        if not ing.empty:
-                            st.markdown(f"**{m}**")
-                            st.dataframe(ing[["Producto", "Cantidad_Estimada"]], hide_index=True)
+                        
+                        texto_receta = pd.DataFrame()
+                        if not df_recetas.empty:
+                            texto_receta = df_recetas[(df_recetas["Dia"] == d) & (df_recetas["Momento"] == m)]
+
+                        # Si hay información (ya sea ingredientes o texto), mostramos la sección
+                        if not ing.empty or not texto_receta.empty:
+                            st.markdown(f"### {m}")
+                            
+                            # 1. MOSTRAR TEXTO (Si existe)
+                            if not texto_receta.empty:
+                                data_texto = texto_receta.iloc[0]
+                                st.markdown(f"**{data_texto['Titulo']}**")
+                                st.success(data_texto['Descripcion'], icon="👩‍🍳")
+                            
+                            # 2. MOSTRAR TABLA DE INGREDIENTES (Si existe)
+                            if not ing.empty:
+                                st.dataframe(ing[["Producto", "Cantidad_Estimada"]], hide_index=True, use_container_width=True)
+                            
+                            st.divider()
