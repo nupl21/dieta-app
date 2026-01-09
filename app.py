@@ -10,16 +10,17 @@ st.title("🛡️ Panel de Control: Lista de Compras (Nube)")
 # --- CONEXIÓN CON GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 1. CARGA DE DATOS ---
+# --- 1. CARGA DE DATOS (CON CACHÉ PARA EVITAR ERROR 429) ---
+@st.cache_data(ttl=600)  # <--- NUEVO: Guarda en memoria por 10 minutos
 def cargar_datos():
     try:
-        # Leemos directo de la nube con ttl=0
-        prod = conn.read(worksheet="productos", ttl=0)
-        menu = conn.read(worksheet="menu_semanal", ttl=0)
+        # Leemos las hojas (sin forzar ttl=0 para usar la caché)
+        prod = conn.read(worksheet="productos")
+        menu = conn.read(worksheet="menu_semanal")
         
-        # --- NUEVO: Intentamos leer la hoja de recetas ---
+        # Intentamos leer la hoja de recetas
         try:
-            recetas = conn.read(worksheet="recetas", ttl=0)
+            recetas = conn.read(worksheet="recetas")
         except:
             # Si falla o no existe, creamos un vacío para que no se rompa
             recetas = pd.DataFrame(columns=["Dia", "Momento", "Titulo", "Descripcion"])
@@ -32,7 +33,7 @@ def cargar_datos():
             prod['Unidad'] = "Unidad"
         prod['Unidad'] = prod['Unidad'].fillna("Unidad")
 
-        # ### NUEVO: Aseguramos que exista la columna Rendimiento
+        # Aseguramos que exista la columna Rendimiento
         if 'Rendimiento' not in prod.columns:
             prod['Rendimiento'] = 1
         
@@ -50,8 +51,9 @@ def cargar_datos():
         
         return prod, menu, recetas
     except Exception as e:
-        st.error(f"⚠️ Error conectando con Google Sheets. Verifica las hojas. Detalle: {e}")
-        st.stop()
+        # En caso de error, devolvemos dataframes vacíos para no romper la app
+        st.error(f"⚠️ Error conectando con Google Sheets. Detalle: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 df_productos, df_menu, df_recetas = cargar_datos()
 
@@ -61,7 +63,6 @@ df_productos, df_menu, df_recetas = cargar_datos()
 with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)", expanded=False):
     st.info("💡 **Tip:** En 'Rendimiento' pon cuánto trae el paquete. Ej: Pan Lactal = 20 (rodajas), Huevos = 30 (maple), Carne = 1 (kg).")
     
-    # --- MODIFICADO: Agregamos la pestaña para editar textos ---
     tab_prod, tab_menu, tab_recetas = st.tabs(["📝 Base de Productos", "📅 Menú Semanal", "📖 Textos Recetas"])
     
     # --- EDITOR DE PRODUCTOS (CON BUSCADOR INTEGRADO) ---
@@ -71,9 +72,8 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
         # 1. BUSCADOR
         texto_busqueda = st.text_input("🔍 Buscar producto para editar:", placeholder="Ej: Avena, Pollo...")
 
-        # 2. FILTRADO (Manteniendo el índice original para seguridad)
-        if texto_busqueda:
-            # Filtramos buscando el texto (insensible a mayúsculas)
+        # 2. FILTRADO
+        if texto_busqueda and not df_productos.empty:
             df_filtered = df_productos[df_productos['Producto'].str.contains(texto_busqueda, case=False, na=False)]
         else:
             df_filtered = df_productos
@@ -102,17 +102,20 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
         # 4. BOTÓN DE GUARDADO INTELIGENTE
         if st.button("💾 Guardar Cambios en Productos (Nube)"):
             try:
-                # SI ESTAMOS FILTRANDO, NO PODEMOS GUARDAR DIRECTAMENTE (Borraríamos el resto)
-                # TENEMOS QUE HACER UN "MERGE"
+                # Merge si hay filtro
                 if texto_busqueda:
-                    df_final = df_productos.copy() # Copia de seguridad del original completo
-                    df_final.update(df_productos_editado) # Actualizamos SOLO las filas modificadas
+                    df_final = df_productos.copy()
+                    df_final.update(df_productos_editado)
                 else:
-                    df_final = df_productos_editado # Si no hay filtro, guardamos todo tal cual
+                    df_final = df_productos_editado
 
                 conn.update(worksheet="productos", data=df_final)
-                st.success("✅ ¡Actualizado correctamente! (Se han combinado los cambios)")
+                
+                # --- LIMPIAR CACHÉ ---
                 st.cache_data.clear()
+                # ---------------------
+                
+                st.success("✅ ¡Actualizado correctamente!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
@@ -130,8 +133,12 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
         if st.button("💾 Guardar Cambios en Menú (Nube)"):
             try:
                 conn.update(worksheet="menu_semanal", data=df_menu_editado)
-                st.success("✅ ¡Actualizado! Recargando...")
+                
+                # --- LIMPIAR CACHÉ ---
                 st.cache_data.clear()
+                # ---------------------
+                
+                st.success("✅ ¡Actualizado! Recargando...")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
@@ -151,8 +158,12 @@ with st.expander("🛠️ Administrar Datos (Editar Precios, Productos y Menú)"
         if st.button("💾 Guardar Textos Recetas (Nube)"):
             try:
                 conn.update(worksheet="recetas", data=df_recetas_editado)
-                st.success("✅ ¡Actualizado! Recargando...")
+                
+                # --- LIMPIAR CACHÉ ---
                 st.cache_data.clear()
+                # ---------------------
+                
+                st.success("✅ ¡Actualizado! Recargando...")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al guardar: {e}")
@@ -229,9 +240,6 @@ if modo == "🛒 Armar Carrito de Compra":
         df_final["Incluir"] = df_final["Incluir"].fillna(False)
         # Si es nuevo o recálculo, priorizamos el cálculo inteligente
         df_final["Cantidad_a_Comprar"] = df_final["Cantidad_a_Comprar"].fillna(df_final["Cantidad_Calculada"])
-        
-        # Opcional: Si quieres que se actualice siempre que cambias días, descomenta la siguiente línea:
-        # df_final["Cantidad_a_Comprar"] = df_final["Cantidad_Calculada"] 
         
         st.session_state.df_carrito = df_final
 
