@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from streamlit_gsheets import GSheetsConnection
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Plan de Dieta - Gestión Inteligente", layout="wide", page_icon="🧠")
-st.title("🧠 Panel de Control: Compra Inteligente")
+st.set_page_config(page_title="Plan de Dieta - Gestión Excel", layout="wide", page_icon="🧠")
+st.title("🧠 Panel de Control: Compra Inteligente (Modo Excel)")
 
 # --- CONEXIÓN ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -31,7 +32,6 @@ def cargar_datos_nube():
         if "Rendimiento_Paquete" in df.columns:
             df.loc[df["Rendimiento_Paquete"] <= 0, "Rendimiento_Paquete"] = 1
             
-        # LIMPIEZA DE TIPO_COMPRA (Normalizamos mayúsculas/minúsculas)
         if "Tipo_Compra" not in df.columns:
             df["Tipo_Compra"] = "Semanal" 
         else:
@@ -51,68 +51,82 @@ def recargar_datos():
     st.session_state.df_live = cargar_datos_nube()
 
 # ==========================================
-# 🛠️ ADMINISTRACIÓN
+# 🛠️ ADMINISTRACIÓN TIPO EXCEL (AgGrid)
 # ==========================================
-with st.expander("🛠️ Editar Productos y Frecuencia", expanded=True):
-    st.info("💡 Frecuencia: Semanal (Frescos), Quincenal (Huevos/Papas), Mensual (Freezer/Latas).")
+with st.expander("🛠️ Editar Productos (Menú en cabeceras)", expanded=True):
     
+    # --- BOTONES DE SELECCIÓN MASIVA (Recuperados) ---
     col_btn1, col_btn2 = st.columns(2)
     if col_btn1.button("✅ Seleccionar TODO"):
         st.session_state.df_live["Activo"] = True
         st.rerun()
+        
     if col_btn2.button("❌ Deseleccionar TODO"):
         st.session_state.df_live["Activo"] = False
         st.rerun()
+    # --------------------------------------------------
 
-    st.divider()
+    st.info("💡 Haz clic en los encabezados de columna para **Ordenar** o **Filtrar** (Icono de filtro).")
+
+    # 1. Configurar opciones de la grilla
+    gb = GridOptionsBuilder.from_dataframe(st.session_state.df_live)
     
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        cats = st.session_state.df_live["Categoria"].unique() if not st.session_state.df_live.empty else []
-        filtro_cat = st.multiselect("Filtrar Categoría:", cats)
-    with col_f2:
-        filtro_txt = st.text_input("Buscar:", placeholder="Pollo...")
-
-    mask = pd.Series([True] * len(st.session_state.df_live))
-    if filtro_cat: mask &= st.session_state.df_live["Categoria"].isin(filtro_cat)
-    if filtro_txt: mask &= st.session_state.df_live["Producto"].str.contains(filtro_txt, case=False)
-
-    df_vista = st.session_state.df_live[mask]
-
-    # --- CAMBIO 1: AGREGAR "Quincenal" A LAS OPCIONES DEL EDITOR ---
-    df_editado = st.data_editor(
-        df_vista,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="editor_inteligente",
-        column_config={
-            "Categoria": st.column_config.SelectboxColumn("Categoría", options=["Almacén", "Verduleria", "Carniceria", "Dietetica", "Lácteos"]),
-            "Tipo_Compra": st.column_config.SelectboxColumn("Frecuencia", options=["Semanal", "Quincenal", "Mensual"], help="Define cada cuánto compras esto."),
-            "Precio_Paquete": st.column_config.NumberColumn("Precio $", format="$%d"),
-            "Cantidad_Semanal": st.column_config.NumberColumn("Consumo 7 días", format="%.2f"),
-            "Activo": st.column_config.CheckboxColumn("¿Incluir?")
-        }
+    # Habilitar paginación, ordenamiento y filtrado en TODAS las columnas
+    gb.configure_default_column(
+        groupable=True, 
+        value=True, 
+        enableRowGroup=True, 
+        aggFunc='sum', 
+        editable=True,   # ¡Todo editable!
+        filterable=True, # ¡Habilita el filtro Excel!
+        sortable=True,   # ¡Habilita ordenar A-Z!
+        resizable=True
     )
+
+    # Configuración específica para columnas desplegables (Dropdowns)
+    gb.configure_column("Categoria", cellEditor='agSelectCellEditor', cellEditorParams={'values': ["Almacén", "Verduleria", "Carniceria", "Dietetica", "Lácteos"]})
+    gb.configure_column("Tipo_Compra", cellEditor='agSelectCellEditor', cellEditorParams={'values': ["Semanal", "Quincenal", "Mensual"]})
     
-    st.session_state.df_live.update(df_editado)
-    
+    # Configuración para Checkbox (Activo)
+    gb.configure_column("Activo", cellDataType='boolean', pinned='left') # Pinned deja el checkbox fijo a la izquierda
+
+    # Construir opciones
+    grid_options = gb.build()
+
+    # 2. MOSTRAR LA TABLA TIPO EXCEL
+    grid_response = AgGrid(
+        st.session_state.df_live,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.MODEL_CHANGED, # Actualiza cuando cambias un dato
+        data_return_mode=DataReturnMode.FILTERED_AND_SORTED, 
+        fit_columns_on_grid_load=True,
+        theme='streamlit', # Tema visual limpio
+        height=400,
+        key='my_grid'
+    )
+
+    # 3. ACTUALIZAR DATOS EN MEMORIA
+    # AgGrid devuelve los datos en 'data'. Los convertimos a DataFrame.
+    df_aggrid = grid_response['data']
+    st.session_state.df_live = df_aggrid # Actualizamos la memoria principal con lo que tocaste en la grilla
+
     col_s1, col_s2 = st.columns([1, 4])
-    if col_s1.button("💾 Guardar"):
+    if col_s1.button("💾 Guardar Cambios"):
         try:
             conn.update(worksheet="plan_dieta_unificado", data=st.session_state.df_live)
             st.cache_data.clear()
-            st.success("✅ Guardado!")
-            st.rerun()
+            st.success("✅ Guardado en Google Sheets!")
         except Exception as e:
             st.error(f"Error: {e}")
-    if col_s2.button("🔄 Recargar"):
+            
+    if col_s2.button("🔄 Recargar Original"):
         recargar_datos()
         st.rerun()
 
 st.divider()
 
 # ==========================================
-# 🛒 CÁLCULO INTELIGENTE (LOGICA DINÁMICA)
+# 🛒 CÁLCULO INTELIGENTE
 # ==========================================
 if not st.session_state.df_live.empty:
     st.subheader("🛒 Planificador de Compra")
@@ -121,52 +135,37 @@ if not st.session_state.df_live.empty:
     map_sem = {"1 Semana": 1, "2 Semanas": 2, "3 Semanas": 3, "1 Mes (4 Semanas)": 4}
     multiplicador = map_sem[periodo]
 
+    # Usamos los datos que vienen directamente de la grilla de arriba (ya filtrados o editados)
     df_calc = st.session_state.df_live[st.session_state.df_live["Activo"] == True].copy()
     
     if not df_calc.empty:
-        # Cálculos Base
         df_calc["Total_Necesario"] = df_calc["Cantidad_Semanal"] * multiplicador
         df_calc["Paquetes"] = np.ceil(df_calc["Total_Necesario"] / df_calc["Rendimiento_Paquete"])
         df_calc["Subtotal"] = df_calc["Paquetes"] * df_calc["Precio_Paquete"]
         
         cols_show = ["Categoria", "Producto", "Total_Necesario", "Paquetes", "Unidad_Compra", "Subtotal"]
         
-        # --- CAMBIO 2: LÓGICA DINÁMICA PARA MOVER LO QUINCENAL ---
         if multiplicador > 1:
-            
             if multiplicador >= 4: 
-                # SI ES MES: Solo lo Mensual es Stock. Lo Quincenal se repone.
                 condicion_stock = df_calc["Tipo_Compra"] == "Mensual"
                 texto_fresco = "FRESCOS Y QUINCENALES (Reponer durante el mes)"
             else:
-                # SI ES QUINCENA: Lo Mensual Y lo Quincenal son Stock (se compran hoy).
                 condicion_stock = df_calc["Tipo_Compra"].isin(["Mensual", "Quincenal"])
                 texto_fresco = "FRESCOS (Reponer semanalmente)"
 
             df_stock = df_calc[condicion_stock]
             df_fresco = df_calc[~condicion_stock]
             
-            st.info(f"📊 Visualizando compra para {periodo}")
             col_stock, col_fresco = st.columns(2)
-            
             with col_stock:
-                st.success(f"🧊 **STOCK INICIAL (${df_stock['Subtotal'].sum():,.0f})**")
-                st.caption("Compra todo esto HOY para cubrir el periodo.")
+                st.success(f"🧊 STOCK (${df_stock['Subtotal'].sum():,.0f})")
                 st.dataframe(df_stock[cols_show], hide_index=True, use_container_width=True)
-                
             with col_fresco:
-                if not df_fresco.empty:
-                    st.warning(f"🥗 **{texto_fresco} (${df_fresco['Subtotal'].sum():,.0f})**")
-                    st.caption("Total estimado. Compra solo lo de la semana para que no se pudra.")
-                    st.dataframe(df_fresco[cols_show], hide_index=True, use_container_width=True)
-                else:
-                    st.success("✅ ¡Todo entra en la compra inicial!")
-                
+                st.warning(f"🥗 {texto_fresco} (${df_fresco['Subtotal'].sum():,.0f})")
+                st.dataframe(df_fresco[cols_show], hide_index=True, use_container_width=True)
         else:
-            # 1 Semana = Todo junto
             st.dataframe(df_calc[cols_show], hide_index=True, use_container_width=True)
 
-        st.divider()
-        st.metric(f"💰 TOTAL ESTIMADO ({periodo})", f"${df_calc['Subtotal'].sum():,.2f}")
+        st.metric(f"💰 TOTAL ESTIMADO", f"${df_calc['Subtotal'].sum():,.2f}")
     else:
-        st.warning("Selecciona productos arriba.")
+        st.warning("No hay productos activos.")
