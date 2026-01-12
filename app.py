@@ -138,7 +138,7 @@ with st.expander("🛠️ Editar Productos (Menú en cabeceras)", expanded=True)
         except Exception as e:
             st.error(f"Error: {e}")
             
-    if col_s2.button("🔄 Recargar Original"):
+    if col_s2.button("🔄 Deshacer cambios"):
         recargar_datos()
         st.rerun()
 
