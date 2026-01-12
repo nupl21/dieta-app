@@ -8,7 +8,7 @@ from st_aggrid.shared import JsCode
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Plan de Dieta", layout="wide", page_icon="🛒")
 
-# CSS: Ajustes visuales
+# CSS: Ajustes visuales para móvil
 st.markdown("""
     <style>
     .block-container {
@@ -97,13 +97,13 @@ function(params) {
 """)
 
 # ==========================================
-# 🛠️ EDITOR VISUAL
+# 🛠️ EDITOR VISUAL (LISTA PRINCIPAL)
 # ==========================================
 with st.expander("📝 LISTA DE COMPRA (Editar datos aquí)", expanded=True):
     
     col_tools1, col_tools2 = st.columns([2, 1])
     with col_tools1:
-        filtro_txt = st.text_input("🔍 Buscar producto:", placeholder="Escribe aquí...")
+        filtro_txt = st.text_input("🔍 Buscar en lista:", placeholder="Escribe aquí...")
     with col_tools2:
         st.write("") 
         st.write("") 
@@ -175,7 +175,7 @@ with st.expander("📝 LISTA DE COMPRA (Editar datos aquí)", expanded=True):
 st.divider()
 
 # ==========================================
-# 📊 RESUMEN DEL CARRITO (ESTILO CLÁSICO)
+# 📊 RESUMEN DEL CARRITO
 # ==========================================
 if not st.session_state.df_live.empty:
     st.subheader("💰 Resumen del Carrito")
@@ -195,18 +195,25 @@ if not st.session_state.df_live.empty:
         df_calc["Paquetes"] = np.ceil(df_calc["Total_Necesario"] / df_calc["Rendimiento_Paquete"])
         df_calc["Subtotal"] = df_calc["Paquetes"] * df_calc["Precio_Paquete"]
         
-        # Aseguramos que Unidad_Compra tenga texto
         df_calc["Unidad_Compra"] = df_calc["Unidad_Compra"].fillna("u.")
 
         total = df_calc['Subtotal'].sum()
+        
+        # --- NUEVA FUNCIÓN DE BÚSQUEDA PARA EL RESUMEN ---
+        col_busqueda, col_vacia = st.columns([3, 1])
+        with col_busqueda:
+            filtro_resumen = st.text_input("🔎 Buscar en el resumen:", placeholder="Escribe para filtrar (ej. Carne)...")
+        
         st.metric("Total Estimado", f"${total:,.0f}")
         
-        # --- TABLA EXACTA A LA IMAGEN ---
-        # Orden: Categoria | Producto | Total_Necesario | Paquetes | Unidad_Compra | Subtotal
+        # --- FILTRADO Y SELECCIÓN DE COLUMNAS ---
         cols_finales = ["Categoria", "Producto", "Total_Necesario", "Paquetes", "Unidad_Compra", "Subtotal"]
-        
         cols_existentes = [c for c in cols_finales if c in df_calc.columns]
         df_final = df_calc[cols_existentes].copy()
+
+        # APLICAR FILTRO SI ESCRIBISTE ALGO
+        if filtro_resumen:
+            df_final = df_final[df_final["Producto"].astype(str).str.contains(filtro_resumen, case=False, na=False)]
 
         st.dataframe(
             df_final,
@@ -221,12 +228,12 @@ if not st.session_state.df_live.empty:
                     help="Tu consumo total calculado"
                 ),
                 "Paquetes": st.column_config.NumberColumn(
-                    "Cant.",  # Cantidad de paquetes
+                    "Cant.",
                     format="%d",
                     help="Número de unidades a comprar"
                 ),
                 "Unidad_Compra": st.column_config.TextColumn(
-                    "Envase", # Ejemplo: Frasco, Botella, Paquete
+                    "Envase",
                     width="small"
                 ),
                 "Subtotal": st.column_config.NumberColumn("Total", format="$%d")
