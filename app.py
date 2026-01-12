@@ -6,7 +6,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Plan de Dieta - Gestión Excel", layout="wide", page_icon="🧠")
-st.title("🧠 Panel de Control: Compra Inteligente (Modo Excel)")
+st.title("🧠 Panel de Control: Compra Inteligente")
 
 # --- CONEXIÓN ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -46,27 +46,35 @@ def cargar_datos_nube():
 if 'df_live' not in st.session_state:
     st.session_state.df_live = cargar_datos_nube()
 
+# Variable para forzar el redibujado de la tabla
+if 'grid_key' not in st.session_state:
+    st.session_state.grid_key = 0
+
 def recargar_datos():
     st.cache_data.clear()
     st.session_state.df_live = cargar_datos_nube()
+    st.session_state.grid_key += 1 # Forzar reinicio de tabla
 
 # ==========================================
 # 🛠️ ADMINISTRACIÓN TIPO EXCEL (AgGrid)
 # ==========================================
 with st.expander("🛠️ Editar Productos (Menú en cabeceras)", expanded=True):
     
-    # --- BOTONES DE SELECCIÓN MASIVA (Recuperados) ---
+    # --- BOTONES DE SELECCIÓN MASIVA (CON FIX VISUAL) ---
     col_btn1, col_btn2 = st.columns(2)
+    
     if col_btn1.button("✅ Seleccionar TODO"):
         st.session_state.df_live["Activo"] = True
+        st.session_state.grid_key += 1  # <--- ESTO OBLIGA A REFRESCAR LOS TILDS
         st.rerun()
         
     if col_btn2.button("❌ Deseleccionar TODO"):
         st.session_state.df_live["Activo"] = False
+        st.session_state.grid_key += 1  # <--- ESTO OBLIGA A REFRESCAR LOS TILDS
         st.rerun()
     # --------------------------------------------------
 
-    st.info("💡 Haz clic en los encabezados de columna para **Ordenar** o **Filtrar** (Icono de filtro).")
+    st.caption("📱 En celular: La columna de selección está fija. Desliza hacia la derecha ➡️ para ver precios.")
 
     # 1. Configurar opciones de la grilla
     gb = GridOptionsBuilder.from_dataframe(st.session_state.df_live)
@@ -80,35 +88,46 @@ with st.expander("🛠️ Editar Productos (Menú en cabeceras)", expanded=True)
         editable=True,   # ¡Todo editable!
         filterable=True, # ¡Habilita el filtro Excel!
         sortable=True,   # ¡Habilita ordenar A-Z!
-        resizable=True
+        resizable=True,
+        minWidth=110     # Evita que las columnas se aplasten en móviles
     )
 
-    # Configuración específica para columnas desplegables (Dropdowns)
+    # --- CONFIGURACIÓN VISUAL (MÓVIL FRIENDLY) ---
+    
+    # Checkbox fijo a la izquierda (Pinned)
+    gb.configure_column("Activo", 
+                        headerName="¿?", 
+                        cellDataType='boolean', 
+                        pinned='left', 
+                        width=70) 
+
+    # Producto con espacio garantizado
+    gb.configure_column("Producto", minWidth=150)
+
+    # Dropdowns
     gb.configure_column("Categoria", cellEditor='agSelectCellEditor', cellEditorParams={'values': ["Almacén", "Verduleria", "Carniceria", "Dietetica", "Lácteos"]})
     gb.configure_column("Tipo_Compra", cellEditor='agSelectCellEditor', cellEditorParams={'values': ["Semanal", "Quincenal", "Mensual"]})
     
-    # Configuración para Checkbox (Activo)
-    gb.configure_column("Activo", cellDataType='boolean', pinned='left') # Pinned deja el checkbox fijo a la izquierda
-
-    # Construir opciones
+    # Construir opciones y AUMENTAR ALTURA DE FILA (Mejor para dedos en táctil)
     grid_options = gb.build()
+    grid_options['rowHeight'] = 50 
 
     # 2. MOSTRAR LA TABLA TIPO EXCEL
+    # Usamos una KEY dinámica. Si cambia el número, Streamlit borra la tabla vieja y pone una nueva limpia.
     grid_response = AgGrid(
         st.session_state.df_live,
         gridOptions=grid_options,
-        update_mode=GridUpdateMode.MODEL_CHANGED, # Actualiza cuando cambias un dato
+        update_mode=GridUpdateMode.MODEL_CHANGED, 
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED, 
-        fit_columns_on_grid_load=True,
-        theme='streamlit', # Tema visual limpio
-        height=400,
-        key='my_grid'
+        fit_columns_on_grid_load=False, 
+        theme='streamlit', 
+        height=450,
+        key=f'my_grid_{st.session_state.grid_key}' # <--- FIX FINAL AQUÍ
     )
 
     # 3. ACTUALIZAR DATOS EN MEMORIA
-    # AgGrid devuelve los datos en 'data'. Los convertimos a DataFrame.
     df_aggrid = grid_response['data']
-    st.session_state.df_live = df_aggrid # Actualizamos la memoria principal con lo que tocaste en la grilla
+    st.session_state.df_live = df_aggrid 
 
     col_s1, col_s2 = st.columns([1, 4])
     if col_s1.button("💾 Guardar Cambios"):
@@ -135,7 +154,7 @@ if not st.session_state.df_live.empty:
     map_sem = {"1 Semana": 1, "2 Semanas": 2, "3 Semanas": 3, "1 Mes (4 Semanas)": 4}
     multiplicador = map_sem[periodo]
 
-    # Usamos los datos que vienen directamente de la grilla de arriba (ya filtrados o editados)
+    # Usamos los datos que vienen directamente de la grilla de arriba
     df_calc = st.session_state.df_live[st.session_state.df_live["Activo"] == True].copy()
     
     if not df_calc.empty:
