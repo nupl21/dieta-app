@@ -99,7 +99,7 @@ with st.expander("🛠️ Editar Productos (Menú en cabeceras)", expanded=True)
                         headerName="¿?", 
                         cellDataType='boolean', 
                         pinned='left', 
-                        width=70) 
+                        width=50) 
 
     # Producto con espacio garantizado
     gb.configure_column("Producto", minWidth=150)
@@ -188,3 +188,4 @@ if not st.session_state.df_live.empty:
         st.metric(f"💰 TOTAL ESTIMADO", f"${df_calc['Subtotal'].sum():,.2f}")
     else:
         st.warning("No hay productos activos.")
+
